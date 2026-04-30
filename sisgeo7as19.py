@@ -10,7 +10,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
 
 # Configuração da Página
 st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
@@ -24,26 +23,22 @@ def iniciar_driver():
     chrome_options.add_argument('--disable-dev-shm-usage')
     chrome_options.add_argument('--disable-gpu')
     
-    # Caminhos comuns para o Chromium no Streamlit Cloud / Linux
-    caminhos_binarios = ["/usr/bin/chromium", "/usr/bin/chromium-browser"]
-    for caminho in caminhos_binarios:
-        if os.path.exists(caminho):
-            chrome_options.binary_location = caminho
-            break
+    # No Streamlit Cloud, o Chromium geralmente fica neste caminho
+    chrome_options.binary_location = "/usr/bin/chromium"
 
-    # Tenta iniciar o driver de forma resiliente
     try:
-        # Tenta usar o driver instalado no sistema (mais estável para Streamlit)
-        if os.path.exists("/usr/bin/chromedriver"):
-            service = Service("/usr/bin/chromedriver")
-        else:
-            service = Service(ChromeDriverManager().install())
-        
+        # Tenta iniciar usando o ChromeDriver padrão do ambiente Linux
+        service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         return driver
     except Exception as e:
-        st.error(f"Erro ao iniciar o navegador: {e}")
-        return None
+        # Fallback caso o caminho acima falhe
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            return driver
+        except Exception as e2:
+            st.error(f"Erro ao iniciar Chrome: {e2}")
+            return None
 
 def executar_extracao(tipo_turno):
     # --- LIMPEZA DE SEGURANÇA ---
@@ -93,7 +88,9 @@ def executar_extracao(tipo_turno):
             preencher_campo("txtDataInicio", data_ini)
             preencher_campo("txtDataFim", data_fim)
             
-            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, "//label[@for='chkComEmpenho']"))
+            # Clique no checkbox
+            empenho = driver.find_element(By.XPATH, "//label[@for='chkComEmpenho']")
+            driver.execute_script("arguments[0].click();", empenho)
 
             # 4. SELEÇÃO DE TIPOS
             botao_tipo = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-id, 'ddlTipoOcorrencia')]")))
@@ -113,6 +110,7 @@ def executar_extracao(tipo_turno):
             st.info(f"⏳ Período: {data_ini} até {data_fim}")
             time.sleep(15) 
 
+            # Habilitar download em modo headless
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
             params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
             driver.execute("send_command", params)
@@ -138,16 +136,16 @@ def executar_extracao(tipo_turno):
                         file_name=f"Relatorio_{tipo_turno}_{hoje_dt.strftime('%d-%m-%Y')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                st.success(f"✅ Sucesso: {tipo_turno}")
+                st.success(f"✅ Extração {tipo_turno} concluída!")
             else:
-                st.error("❌ Arquivo não gerado.")
+                st.error("❌ O Excel não foi gerado pelo sistema.")
 
         except Exception as e:
-            st.error(f"❌ Erro: {e}")
+            st.error(f"❌ Erro na extração: {e}")
         finally:
             driver.quit()
 
-# Interface
+# Interface de botões
 col1, col2 = st.columns(2)
 with col1:
     if st.button("☀️ DIA (07:01 às 19:00)"):
