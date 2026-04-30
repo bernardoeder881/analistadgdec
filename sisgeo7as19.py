@@ -11,17 +11,18 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 
 # Configuração da Página
-st.set_page_config(page_title="SisGeO Extrator Turnos", page_icon="🚒")
-st.title("🚒 SisGeO - Extrator de Relatórios")
+st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
+st.title("SisGeO Extrator 🚒")
 st.write("Selecione o turno para extração automática:")
 
 def executar_extracao(tipo_turno):
     # --- LIMPEZA DE SEGURANÇA NO SERVIDOR ---
+    # Remove qualquer Excel antigo para garantir que você baixe o arquivo atual
     for f in glob.glob("*.xlsx"):
         try: os.remove(f)
         except: pass
 
-    with st.spinner(f"Processando Turno {tipo_turno}..."):
+    with st.spinner(f"Processando Turno {tipo_turno}... Isso pode levar até 40 segundos."):
         try:
             # 1. CONFIGURAÇÃO DO CHROME (OTIMIZADA PARA STREAMLIT)
             chrome_options = Options()
@@ -56,23 +57,23 @@ def executar_extracao(tipo_turno):
             driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]").click()
             time.sleep(5)
 
-            # 4. ACESSO E PREENCHIMENTO DOS FILTROS
+            # 4. ACESSO E PREENCHIMENTO DOS FILTROS (COM LIMPEZA TRAVADA)
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
             
-            def preencher_com_trava(elemento_id, valor):
+            def preencher_campo_blindado(elemento_id, valor):
                 campo = wait.until(EC.presence_of_element_located((By.ID, elemento_id)))
                 campo.click()
-                # Limpa tudo (CTRL+A + BACKSPACE) para não sobrar resquícios de hora
+                # Seleciona tudo e apaga antes de digitar (essencial para campos com máscara)
                 campo.send_keys(Keys.CONTROL + "a")
                 campo.send_keys(Keys.BACKSPACE)
                 time.sleep(0.5)
                 campo.send_keys(valor)
-                # O TAB é vital para o sistema processar a máscara do campo
+                # Aperta TAB para o site validar o horário e não "pular" para o fim do dia
                 campo.send_keys(Keys.TAB)
                 time.sleep(0.5)
 
-            preencher_com_trava("txtDataInicio", data_ini)
-            preencher_com_trava("txtDataFim", data_fim)
+            preencher_campo_blindado("txtDataInicio", data_ini)
+            preencher_campo_blindado("txtDataFim", data_fim)
             
             # Marcar Viaturas Empenhadas
             empenho = driver.find_element(By.XPATH, "//label[@for='chkComEmpenho']")
@@ -93,15 +94,15 @@ def executar_extracao(tipo_turno):
             
             # 6. CONSULTA E GERAÇÃO DO EXCEL
             driver.find_element(By.ID, "btnBuscar").click()
-            st.info(f"⏳ Buscando no período: {data_ini} até {data_fim}")
-            time.sleep(15) # Tempo de processamento do servidor SisGeO
+            st.info(f"⏳ Buscando período: {data_ini} até {data_fim}")
+            time.sleep(15) 
 
             # Autoriza o download no Chrome Headless
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
             params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
             driver.execute("send_command", params)
 
-            # Clica no botão de exportar (Amarelo/Warning)
+            # Clica no botão de exportar
             botao_excel = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.buttons-excel.btn-warning")))
             driver.execute_script("arguments[0].click();", botao_excel)
             
@@ -118,17 +119,17 @@ def executar_extracao(tipo_turno):
             if arquivo_final:
                 with open(arquivo_final, "rb") as f:
                     st.download_button(
-                        label=f"💾 CLIQUE PARA BAIXAR - {tipo_turno}",
+                        label=f"💾 CLIQUE PARA BAIXAR RELATÓRIO - {tipo_turno}",
                         data=f,
                         file_name=f"Relatorio_{tipo_turno}_{hoje_dt.strftime('%d-%m-%Y')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                st.success(f"✅ Relatório {tipo_turno} gerado com sucesso!")
+                st.success(f"✅ Relatório {tipo_turno} extraído com sucesso!")
             else:
-                st.error("❌ O arquivo não foi detectado. Tente novamente em instantes.")
+                st.error("❌ O arquivo não foi gerado. Verifique se o SisGeO possui dados neste período.")
 
         except Exception as e:
-            st.error(f"❌ Erro na extração: {e}")
+            st.error(f"❌ Erro na execução: {e}")
         finally:
             if 'driver' in locals():
                 driver.quit()
