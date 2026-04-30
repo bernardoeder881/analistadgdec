@@ -11,8 +11,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 
 # Configuração da Página
-st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
-st.title("SisGeO Extrator 🚒")
+st.set_page_config(page_title="🚀SisGeO Extrator 🚒", page_icon="🚀🚒")
+st.title("SisGeO Extrator 🚀🚒")
 st.write("Selecione o turno para extração automática:")
 
 def executar_extracao(tipo_turno):
