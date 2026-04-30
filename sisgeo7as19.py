@@ -5,6 +5,7 @@ import glob
 from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -14,26 +15,44 @@ from selenium.webdriver.common.keys import Keys
 st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
 st.title("SisGeO Extrator 🚒")
 
+def iniciar_driver():
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
+    
+    # Tentativa de configurar o download automático
+    prefs = {"download.default_directory": os.getcwd()}
+    chrome_options.add_experimental_option("prefs", prefs)
+
+    try:
+        # Tenta iniciar sem especificar caminho (deixa o Streamlit achar o driver no PATH)
+        driver = webdriver.Chrome(options=chrome_options)
+        return driver
+    except Exception:
+        try:
+            # Segunda tentativa: Apontando para o local padrão do Linux no Streamlit
+            chrome_options.binary_location = "/usr/bin/chromium"
+            service = Service("/usr/bin/chromedriver")
+            return webdriver.Chrome(service=service, options=chrome_options)
+        except Exception as e:
+            st.error(f"Erro crítico ao abrir navegador: {e}")
+            return None
+
 def executar_extracao(tipo_turno):
-    # Limpa arquivos Excel antigos da pasta
+    # Limpa arquivos Excel antigos
     for f in glob.glob("*.xlsx"):
         try: os.remove(f)
         except: pass
 
-    with st.spinner(f"Extraindo Turno {tipo_turno}..."):
+    driver = iniciar_driver()
+    if not driver: return
+
+    wait = WebDriverWait(driver, 25)
+
+    with st.spinner(f"Processando {tipo_turno}..."):
         try:
-            chrome_options = Options()
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.binary_location = "/usr/bin/chromium"
-            
-            prefs = {"download.default_directory": os.getcwd()}
-            chrome_options.add_experimental_option("prefs", prefs)
-
-            driver = webdriver.Chrome(options=chrome_options)
-            wait = WebDriverWait(driver, 25)
-
             # Lógica de Horários
             hoje_dt = datetime.now()
             hoje_str = hoje_dt.strftime("%d/%m/%Y")
@@ -49,13 +68,13 @@ def executar_extracao(tipo_turno):
             wait.until(EC.presence_of_element_located((By.ID, "Usuario"))).send_keys("40875")
             driver.find_element(By.ID, "Senha").send_keys("Cidadao51@")
             driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]").click()
-            time.sleep(4)
+            time.sleep(5)
 
             # 2. Ir para consulta
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
             time.sleep(2)
             
-            # 3. Selecionar Tipos Primeiro (Para evitar que o reload limpe as datas depois)
+            # 3. Selecionar Tipos (IMPORTANTE: Antes das datas para não resetar o formulário)
             botao_tipo = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-id, 'ddlTipoOcorrencia')]")))
             driver.execute_script("arguments[0].click();", botao_tipo)
             time.sleep(1)
@@ -66,32 +85,28 @@ def executar_extracao(tipo_turno):
                     item = driver.find_element(By.XPATH, f"//span[contains(text(), '{t}')]")
                     driver.execute_script("arguments[0].click();", item)
                 except: pass
+            
             driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
             time.sleep(1)
 
-            # 4. Marcar Viaturas Empenhadas
+            # 4. Viaturas Empenhadas
             driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "chkComEmpenho"))
 
-            # 5. PREENCHER DATAS POR ÚLTIMO (A técnica do CONTROL+A e repetição)
-            def preencher_data_final(id_campo, valor):
-                campo = driver.find_element(By.ID, id_campo)
+            # 5. Preencher Datas (Garantindo que fiquem travadas)
+            for campo_id, valor in [("txtDataInicio", data_ini), ("txtDataFim", data_f)]:
+                campo = driver.find_element(By.ID, campo_id)
                 campo.click()
                 campo.send_keys(Keys.CONTROL + "a")
                 campo.send_keys(Keys.BACKSPACE)
                 time.sleep(0.3)
                 campo.send_keys(valor)
                 campo.send_keys(Keys.TAB)
-                time.sleep(0.5)
 
-            preencher_data_final("txtDataInicio", data_ini)
-            preencher_data_final("txtDataFim", data_f)
-
-            # 6. Buscar
-            st.info(f"Filtro aplicado: {data_ini} até {data_f}")
+            # 6. Buscar e Download
+            st.info(f"Extraindo período: {data_ini} até {data_f}")
             driver.find_element(By.ID, "btnBuscar").click()
             time.sleep(15)
 
-            # 7. Download
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
             params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
             driver.execute("send_command", params)
@@ -99,7 +114,7 @@ def executar_extracao(tipo_turno):
             botao_excel = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.buttons-excel.btn-warning")))
             driver.execute_script("arguments[0].click();", botao_excel)
             
-            # Aguarda o arquivo
+            # Captura o arquivo
             arquivo_final = None
             for _ in range(20):
                 arquivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
@@ -114,19 +129,19 @@ def executar_extracao(tipo_turno):
                     st.download_button(
                         label=f"💾 BAIXAR PLANILHA {tipo_turno}",
                         data=f,
-                        file_name=f"Sisgeo_{tipo_turno}.xlsx",
+                        file_name=f"Relatorio_{tipo_turno}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                st.success("Pronto!")
+                st.success("✅ Extração concluída!")
             else:
-                st.error("Erro ao gerar arquivo.")
+                st.error("❌ O arquivo não apareceu. Tente novamente.")
 
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"❌ Erro durante o processo: {e}")
         finally:
             driver.quit()
 
-# Botões
+# Interface
 col1, col2 = st.columns(2)
 with col1:
     if st.button("☀️ DIA (07:01 - 19:00)"):
