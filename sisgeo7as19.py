@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import time
+import glob
 from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -12,9 +13,14 @@ from selenium.webdriver.common.keys import Keys
 # Configuração da Página
 st.set_page_config(page_title="SisGeO Extrator Turnos", page_icon="🚒")
 st.title("🚒 SisGeO - Extrator de Relatórios")
-st.write("Selecione o turno para extração:")
 
 def executar_extracao(tipo_turno):
+    # --- LIMPEZA DE SEGURANÇA ---
+    # Remove qualquer Excel antigo na pasta para não baixar o arquivo errado
+    for f in glob.glob("*.xlsx"):
+        try: os.remove(f)
+        except: pass
+
     with st.spinner(f"Processando Turno {tipo_turno}..."):
         try:
             # 1. CONFIGURAÇÃO DO CHROME
@@ -29,7 +35,7 @@ def executar_extracao(tipo_turno):
             driver = webdriver.Chrome(options=chrome_options)
             wait = WebDriverWait(driver, 25)
 
-            # 2. DEFINIÇÃO DAS DATAS (Lógica de Ontem/Hoje)
+            # 2. LÓGICA DE DATAS (O PONTO CHAVE)
             hoje_dt = datetime.now()
             ontem_dt = hoje_dt - timedelta(days=1)
             
@@ -38,7 +44,7 @@ def executar_extracao(tipo_turno):
 
             if tipo_turno == "DIA":
                 data_ini, data_fim = f"{hoje_str} 07:01", f"{hoje_str} 19:00"
-            else:  # Turno NOITE (19h de ontem às 07h de hoje)
+            else:  # NOITE: 19h de ontem até 07h de hoje
                 data_ini, data_fim = f"{ontem_str} 19:00", f"{hoje_str} 07:00"
 
             # 3. LOGIN
@@ -48,21 +54,25 @@ def executar_extracao(tipo_turno):
             driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]").click()
             time.sleep(5)
 
-            # 4. FILTROS
+            # 4. FILTROS (Com limpeza profunda dos campos)
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
             
+            # Limpa e preenche Data Início
             input_ini = wait.until(EC.presence_of_element_located((By.ID, "txtDataInicio")))
-            input_ini.clear()
+            input_ini.send_keys(Keys.CONTROL + "a")
+            input_ini.send_keys(Keys.DELETE)
             input_ini.send_keys(data_ini)
             
+            # Limpa e preenche Data Fim
             input_fim = driver.find_element(By.ID, "txtDataFim")
-            input_fim.clear()
+            input_fim.send_keys(Keys.CONTROL + "a")
+            input_fim.send_keys(Keys.DELETE)
             input_fim.send_keys(data_fim)
             
             driver.find_element(By.XPATH, "//label[@for='chkComEmpenho']").click()
 
             # 5. SELEÇÃO DE TIPOS
-            botao_tipo = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-id, 'ddlTipoOcorrencia') or contains(@title, 'Selecione')]")))
+            botao_tipo = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-id, 'ddlTipoOcorrencia')]")))
             driver.execute_script("arguments[0].click();", botao_tipo)
             time.sleep(1)
 
@@ -76,7 +86,7 @@ def executar_extracao(tipo_turno):
             
             # 6. BUSCA E DOWNLOAD
             driver.find_element(By.ID, "btnBuscar").click()
-            st.write(f"⏳ Buscando dados de {data_ini} até {data_fim}...")
+            st.info(f"Busca: {data_ini} até {data_fim}")
             time.sleep(15) 
 
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
@@ -86,7 +96,7 @@ def executar_extracao(tipo_turno):
             botao_excel = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.buttons-excel.btn-warning")))
             driver.execute_script("arguments[0].click();", botao_excel)
             
-            # Verificação do arquivo
+            # Aguarda o arquivo novo aparecer
             arquivo_final = None
             for _ in range(20):
                 arquivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
@@ -99,28 +109,23 @@ def executar_extracao(tipo_turno):
             if arquivo_final:
                 with open(arquivo_final, "rb") as f:
                     st.download_button(
-                        label=f"💾 BAIXAR RELATÓRIO {tipo_turno}",
+                        label=f"💾 BAIXAR EXCEL {tipo_turno}",
                         data=f,
                         file_name=f"Relatorio_{tipo_turno}_{hoje_str.replace('/','-')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                st.success(f"✅ Extração concluída: {data_ini} a {data_fim}")
+                st.success(f"Relatório {tipo_turno} gerado!")
             else:
-                st.error("❌ O SisGeO não gerou o arquivo. Pode não haver ocorrências nesse período.")
+                st.error("Arquivo não encontrado no servidor.")
 
         except Exception as e:
-            st.error(f"❌ Erro: {e}")
+            st.error(f"Erro: {e}")
         finally:
-            if 'driver' in locals():
-                driver.quit()
+            if 'driver' in locals(): driver.quit()
 
-# Layout dos botões
+# Layout
 col1, col2 = st.columns(2)
-
 with col1:
-    if st.button("☀️ DIA (07h às 19h Hoje)"):
-        executar_extracao("DIA")
-
+    if st.button("☀️ DIA (07h-19h)"): executar_extracao("DIA")
 with col2:
-    if st.button("🌙 NOITE (19h Ontem às 07h Hoje)"):
-        executar_extracao("NOITE")
+    if st.button("🌙 NOITE (19h-07h)"): executar_extracao("NOITE")
