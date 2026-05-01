@@ -16,53 +16,51 @@ from selenium.webdriver.support import expected_conditions as EC
 st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
 st.title("SisGeO Extrator 🚒")
 
-def tratar_excel_fuso(caminho_arquivo):
+def tratar_e_clonar_manual(caminho_arquivo, data_ini, data_f):
     """
-    Limpa a 'bagunça' do SisGeO:
-    1. Pula linhas inúteis de cabeçalho.
-    2. Converte textos em datas reais.
-    3. Ajusta o fuso horário de Brasília (-3h).
+    Transforma a extração do robô em uma cópia idêntica à extração manual.
     """
     try:
-        # Lê o arquivo pulando as 2 primeiras linhas (onde ficam os títulos do SisGeO)
-        # O cabeçalho real passa a ser a linha 3
-        df = pd.read_excel(caminho_arquivo, skiprows=2)
+        # 1. Lê a planilha bruta ignorando o lixo inicial para processar os dados
+        df_dados = pd.read_excel(caminho_arquivo, skiprows=2)
         
-        # Remove colunas que estejam totalmente vazias e linhas em branco
-        df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
-
-        # Lista de colunas de data que precisam de correção de fuso
-        colunas_data = [
-            'Data Ocorrência', 'Data Despacho', 'Data Deslocamento', 
-            'Data Chegada', 'Data Fechamento'
-        ]
-        
+        # 2. Correção de Fuso Horário (-3h) nas colunas de data
+        colunas_data = ['Data Ocorrência', 'Data Despacho', 'Data Deslocamento', 'Data Chegada', 'Data Fechamento']
         for col in colunas_data:
-            if col in df.columns:
-                # Converte para formato de data (datetime)
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-                
-                # Subtrai 3 horas (Correção do fuso do servidor)
-                # Nota: Mantemos como datetime para o Looker reconhecer como data
-                df[col] = df[col] - pd.Timedelta(hours=3)
-                
-                # Formata para padrão brasileiro para visualização, mas mantém tipo data
-                df[col] = df[col].dt.strftime('%d/%m/%Y %H:%M:%S')
+            if col in df_dados.columns:
+                df_dados[col] = pd.to_datetime(df_dados[col], dayfirst=True, errors='coerce')
+                df_dados[col] = df_dados[col] - pd.Timedelta(hours=3)
+                # Formata exatamente como o SisGeO manual (DD/MM/YYYY HH:MM)
+                df_dados[col] = df_dados[col].dt.strftime('%d/%m/%Y %H:%M')
 
-        # Salva o arquivo limpo e organizado
-        df.to_excel(caminho_arquivo, index=False)
+        # 3. RECONSTRUÇÃO DA ESTRUTURA MANUAL (O "PULO DO GATO")
+        # Criamos as duas linhas de topo que o SisGeO gera manualmente
+        linha_1 = ["SisGeO - Consulta Ocorrência"] + [None] * (len(df_dados.columns) - 1)
+        linha_2 = [f"Período: {data_ini}:00 a {data_f}:59"] + [None] * (len(df_dados.columns) - 1)
+        
+        # Criar um novo DataFrame com essas linhas
+        df_topo = pd.DataFrame([linha_1, linha_2], columns=df_dados.columns)
+        
+        # Concatenar: Topo + Nomes das Colunas (como linha) + Dados
+        # Primeiro, transformamos os nomes das colunas em uma linha de dados
+        df_colunas = pd.DataFrame([df_dados.columns.tolist()], columns=df_dados.columns)
+        
+        # Juntamos tudo
+        df_final = pd.concat([df_topo, df_colunas, df_dados], ignore_index=True)
+
+        # 4. Salva sem o cabeçalho do Pandas (pois já inserimos manualmente)
+        df_final.to_excel(caminho_arquivo, index=False, header=False)
         return True
     except Exception as e:
-        st.error(f"Erro ao tratar dados: {e}")
+        st.error(f"Erro na formatação: {e}")
         return False
 
 def executar_extracao(tipo_turno):
-    # Limpa arquivos antigos na pasta para não baixar o arquivo errado
     for f in glob.glob("*.xlsx"):
         try: os.remove(f)
         except: pass
 
-    with st.spinner(f"Processando {tipo_turno}..."):
+    with st.spinner(f"Extraindo {tipo_turno}..."):
         try:
             chrome_options = Options()
             chrome_options.add_argument('--headless')
@@ -70,8 +68,6 @@ def executar_extracao(tipo_turno):
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--window-size=1920,1080')
             chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-            
-            # Caminho do Chromium no ambiente Streamlit Cloud
             chrome_options.binary_location = "/usr/bin/chromium"
             
             prefs = {"download.default_directory": os.getcwd()}
@@ -80,7 +76,7 @@ def executar_extracao(tipo_turno):
             driver = webdriver.Chrome(options=chrome_options)
             wait = WebDriverWait(driver, 50) 
 
-            # LÓGICA DE DATAS
+            # DATAS
             hoje_dt = datetime.now()
             hoje_str = hoje_dt.strftime("%d/%m/%Y")
             if tipo_turno == "DIA":
@@ -89,19 +85,13 @@ def executar_extracao(tipo_turno):
                 ontem_str = (hoje_dt - timedelta(days=1)).strftime("%d/%m/%Y")
                 data_ini, data_f = f"{ontem_str} 19:00", f"{hoje_str} 07:00"
 
-            # LOGIN
+            # LOGIN E NAVEGAÇÃO
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/Entrar")
+            wait.until(EC.presence_of_element_located((By.ID, "Usuario"))).send_keys("40875")
+            driver.find_element(By.ID, "Senha").send_keys("Cidadao51@")
+            driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]"))
             
-            user_field = wait.until(EC.presence_of_element_located((By.ID, "Usuario")))
-            user_field.send_keys("40875")
-            
-            pass_field = driver.find_element(By.ID, "Senha")
-            pass_field.send_keys("Cidadao51@")
-            
-            btn_entrar = driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]")
-            driver.execute_script("arguments[0].click();", btn_entrar)
-            
-            time.sleep(6)
+            time.sleep(5)
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
             
             # FILTROS
@@ -109,30 +99,23 @@ def executar_extracao(tipo_turno):
             driver.execute_script(f"document.getElementById('txtDataInicio').value = '{data_ini}';")
             driver.execute_script(f"document.getElementById('txtDataFim').value = '{data_f}';")
             
-            # MARCAR VIATURAS
             chk = driver.find_element(By.ID, "chkComEmpenho")
-            if not chk.is_selected():
-                driver.execute_script("arguments[0].click();", chk)
+            if not chk.is_selected(): driver.execute_script("arguments[0].click();", chk)
 
-            # BUSCAR
-            btn_buscar = driver.find_element(By.ID, "btnBuscar")
-            driver.execute_script("arguments[0].click();", btn_buscar)
-            
-            st.info("Aguardando processamento do SisGeO (20s)...")
+            driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "btnBuscar"))
+            st.info("Processando no SisGeO...")
             time.sleep(20)
 
-            # CONFIGURAÇÃO DE DOWNLOAD HEADLESS
+            # DOWNLOAD
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
             params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
             driver.execute("send_command", params)
-
-            # CLIQUE NO BOTÃO EXCEL
+            
             btn_excel = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.buttons-excel.btn-warning")))
             driver.execute_script("arguments[0].click();", btn_excel)
             
-            # ESPERA O DOWNLOAD CONCLUIR
             arquivo_final = None
-            for _ in range(40):
+            for _ in range(45):
                 arquivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
                 if arquivos:
                     arquivos.sort(key=os.path.getmtime)
@@ -141,32 +124,27 @@ def executar_extracao(tipo_turno):
                 time.sleep(1)
 
             if arquivo_final:
-                # APLICA A LIMPEZA DE ANALISTA DE DADOS
-                sucesso = tratar_excel_fuso(arquivo_final)
-                
-                if sucesso:
+                # FORMATAÇÃO PARA FICAR IGUAL AO MANUAL
+                if tratar_e_clonar_manual(arquivo_final, data_ini, data_f):
                     with open(arquivo_final, "rb") as f:
                         st.download_button(
-                            label=f"💾 BAIXAR RELATÓRIO LIMPO ({tipo_turno})",
+                            label="💾 BAIXAR EXTRATO IDÊNTICO AO MANUAL",
                             data=f,
-                            file_name=f"Relatorio_{tipo_turno}_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+                            file_name=f"SisGeO_Consulta_{tipo_turno}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
-                    st.success("Planilha organizada e fuso horário corrigido!")
+                    st.success("Pronto! Arquivo idêntico ao extraído manualmente.")
             else:
-                st.error("O sistema demorou muito para gerar o arquivo. Tente novamente.")
+                st.error("Erro no download.")
 
         except Exception as e:
-            st.error(f"Ocorreu um erro na extração: {e}")
+            st.error(f"Erro: {e}")
         finally:
-            if 'driver' in locals():
-                driver.quit()
+            if 'driver' in locals(): driver.quit()
 
-# INTERFACE
+# BOTAO
 col1, col2 = st.columns(2)
 with col1:
-    if st.button("☀️ Turno Dia"):
-        executar_extracao("DIA")
+    if st.button("☀️ Turno Dia"): executar_extracao("DIA")
 with col2:
-    if st.button("🌙 Turno Noite"):
-        executar_extracao("NOITE")
+    if st.button("🌙 Turno Noite"): executar_extracao("NOITE")
