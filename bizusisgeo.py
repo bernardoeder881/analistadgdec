@@ -3,7 +3,6 @@ import os
 import time
 import glob
 from datetime import datetime
-import pytz
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -12,20 +11,20 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 
 # Configuração da Página
-st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
-st.title("🚒 SisGeO Extrator")
+st.set_page_config(page_title="SisGeO Extrator 🚀", page_icon="🚀")
+st.title("🚀 SisGeO Extrator")
 st.write("Relatório Automático: **07:01 às 19:00**")
 
 # Botão de Execução
 if st.button("Gerar Planilha Agora"):
-    # Limpa arquivos antigos para não baixar o errado
+    # Limpa arquivos antigos para evitar erros de download
     for f in glob.glob("*.xlsx"):
         try: os.remove(f)
         except: pass
 
-    with st.spinner("O robô está trabalhando... Isso leva cerca de 40 segundos."):
+    with st.spinner("O robô está trabalhando..."):
         try:
-            # 1. CONFIGURAÇÃO DO CHROME (Sua base estável)
+            # 1. CONFIGURAÇÃO DO CHROME
             chrome_options = Options()
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--no-sandbox')
@@ -50,7 +49,7 @@ if st.button("Gerar Planilha Agora"):
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
             time.sleep(2)
 
-            # 4. SELEÇÃO DE TIPOS (Primeiro para o site não resetar as datas depois)
+            # 4. SELEÇÃO DE TIPOS (Primeiro para não resetar a data depois)
             botao_tipo = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-id, 'ddlTipoOcorrencia')]")))
             driver.execute_script("arguments[0].click();", botao_tipo)
             time.sleep(1)
@@ -65,13 +64,11 @@ if st.button("Gerar Planilha Agora"):
             driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
             time.sleep(1)
 
-            # --- AJUSTE DE FUSO HORÁRIO BRASIL ---
-            fuso_br = pytz.timezone('America/Sao_Paulo')
-            hoje_br = datetime.now(fuso_br).strftime("%d/%m/%Y")
-            data_ini, data_f = f"{hoje_br} 07:01", f"{hoje_br} 19:00"
+            # --- DATAS ---
+            hoje = datetime.now().strftime("%d/%m/%Y")
+            data_ini, data_f = f"{hoje} 07:01", f"{hoje} 19:00"
 
-            # 5. PREENCHER DATAS (Por último para travar o filtro)
-            # Viaturas Empenhadas
+            # 5. PREENCHER DATAS E VIATURAS
             driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "chkComEmpenho"))
 
             for campo_id, valor in [("txtDataInicio", data_ini), ("txtDataFim", data_f)]:
@@ -88,7 +85,7 @@ if st.button("Gerar Planilha Agora"):
             st.write(f"🔍 Filtrando: {data_ini} até {data_f}")
             time.sleep(15) 
 
-            # Autorizar download em headless
+            # Comando para autorizar download em headless
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
             params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
             driver.execute("send_command", params)
@@ -97,7 +94,7 @@ if st.button("Gerar Planilha Agora"):
             botao_excel = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.buttons-excel.btn-warning")))
             driver.execute_script("arguments[0].click();", botao_excel)
             
-            # Aguarda o arquivo aparecer
+            # Aguarda o arquivo
             arquivo_final = None
             for _ in range(20):
                 arquivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
@@ -107,13 +104,13 @@ if st.button("Gerar Planilha Agora"):
                     break
                 time.sleep(1)
 
-            # 7. DOWNLOAD
+            # 7. DISPONIBILIZAR DOWNLOAD
             if arquivo_final:
                 with open(arquivo_final, "rb") as f:
                     st.download_button(
                         label="💾 BAIXAR RELATÓRIO EXCEL",
                         data=f,
-                        file_name=f"Relatorio_{hoje_br.replace('/','-')}.xlsx",
+                        file_name=arquivo_final,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 st.success(f"✅ Relatório pronto!")
