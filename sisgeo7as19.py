@@ -9,30 +9,16 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 # ==========================================
-# VERSÃO DO CÓDIGO: v6.7
-# Foco: Naturezas Específicas (Corte, Salvamento, Deslizamento, etc)
+# VERSÃO DO CÓDIGO: v6.9 (ESPELHO DA MANUAL)
+# Foco: Fidelidade total à planilha base.
 # ==========================================
-VERSAO = "v6.7"
+VERSAO = "v6.9"
 
 st.set_page_config(page_title=f"SisGeO Extrator {VERSAO}", page_icon="🚒")
 
-# Interface Visual
-st.markdown("""
-    <style>
-    .cronometro {
-        font-size: 22px; font-weight: bold; color: white;
-        background-color: #d9534f; padding: 15px;
-        border-radius: 10px; text-align: center; margin-bottom: 20px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title(f"SisGeO Extrator {VERSAO} 🚒")
-st.sidebar.info(f"Analista: Python & BI\nFiltro: Naturezas Específicas")
-
-def tratar_e_filtrar_preservando_nomes(caminho, d_ini_str, d_fim_str):
+def tratar_e_filtrar_fiel_a_base(caminho, d_ini_str, d_fim_str):
     try:
-        # 1. Identifica o cabeçalho original
+        # 1. Localiza o início dos dados (Preservando a estrutura SisGeO)
         df_temp = pd.read_excel(caminho)
         linha_cabecalho = 0
         for i, row in df_temp.iterrows():
@@ -40,13 +26,14 @@ def tratar_e_filtrar_preservando_nomes(caminho, d_ini_str, d_fim_str):
                 linha_cabecalho = i + 1
                 break
         
-        # 2. Carrega dados
+        # 2. Carrega mantendo NOMES DE COLUNAS ORIGINAIS
         df = pd.read_excel(caminho, skiprows=linha_cabecalho)
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed')] # Remove colunas vazias
         
         # ==========================================================
-        # FILTRO DE NATUREZAS CORRIGIDO (Os 5 específicos)
+        # NATUREZAS DEFINIDAS PELO ANALISTA (BASE CORRETA)
         # ==========================================================
-        naturezas_alvo = [
+        naturezas_corretas = [
             'Corte de Árvore', 
             'Salvamento de Pessoa', 
             'DESLIZAMENTO / DESABAMENTO', 
@@ -54,112 +41,108 @@ def tratar_e_filtrar_preservando_nomes(caminho, d_ini_str, d_fim_str):
             'FOGO EM VEGETAÇÃO'
         ]
         
-        # Tenta identificar a coluna de tipo (geralmente 'Tipo Ocorrência')
-        coluna_tipo = 'Tipo Ocorrência' if 'Tipo Ocorrência' in df.columns else 'Natureza'
+        # Localiza a coluna correta (pode variar entre 'Tipo Ocorrência' ou 'Natureza')
+        col_alvo = next((c for c in df.columns if c in ['Tipo Ocorrência', 'Natureza']), None)
         
-        if coluna_tipo in df.columns:
-            # Filtro exato para as 5 categorias
-            df = df[df[coluna_tipo].isin(naturezas_alvo)]
+        if col_alvo:
+            # FILTRO RADICAL: Mantém apenas o que está na lista
+            df = df[df[col_alvo].isin(naturezas_corretas)]
+        else:
+            # Fallback caso o sistema mude o nome da coluna de novo
+            for col in df.columns:
+                if df[col].astype(str).isin(naturezas_corretas).any():
+                    df = df[df[col].isin(naturezas_corretas)]
+                    break
 
-        # 3. Preparação para Filtro de Período e Fuso (-3h)
-        limite_ini = pd.to_datetime(d_ini_str, dayfirst=True)
-        limite_fim = pd.to_datetime(d_fim_str, dayfirst=True)
+        # 3. Tratamento de Datas e Fuso (-3h) - Sem mudar nomes das colunas
         cols_data = ['Data Ocorrência', 'Data Despacho', 'Data Deslocamento', 'Data Chegada', 'Data Fechamento']
         
         if 'Data Ocorrência' in df.columns:
-            df['Data Ocorrência'] = pd.to_datetime(df['Data Ocorrência'], dayfirst=True, errors='coerce')
-            df['Data Ocorrência'] = df['Data Ocorrência'] - pd.Timedelta(hours=3)
+            df['Data Ocorrência'] = pd.to_datetime(df['Data Ocorrência'], dayfirst=True, errors='coerce') - pd.Timedelta(hours=3)
+            # Filtro de data rigoroso conforme o turno solicitado
+            limite_ini = pd.to_datetime(d_ini_str, dayfirst=True)
+            limite_fim = pd.to_datetime(d_fim_str, dayfirst=True)
             df = df[(df['Data Ocorrência'] >= limite_ini) & (df['Data Ocorrência'] <= limite_fim)]
 
-        # 4. Ajusta fuso nas demais colunas sem alterar nomes
         for col in cols_data:
             if col in df.columns and col != 'Data Ocorrência':
                 df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce') - pd.Timedelta(hours=3)
-            
             if col in df.columns:
                 df[col] = df[col].dt.strftime('%d/%m/%Y %H:%M')
 
-        # 5. Salva estrutura SisGeO para consumo no Looker
+        # 4. Exportação idêntica à planilha manual (Start na linha 3)
         with pd.ExcelWriter(caminho, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, startrow=2, sheet_name='Sheet1')
             ws = writer.sheets['Sheet1']
-            fmt = writer.book.add_format({'align': 'left'})
-            ws.write(0, 0, "SisGeO - Base Específica (Defesa Civil/Salvamento)", fmt)
-            ws.write(1, 0, f"Período: {d_ini_str} a {d_fim_str}", fmt)
+            # Mantém o cabeçalho informativo do SisGeO
+            ws.write(0, 0, "SisGeO - Consulta Ocorrência (Filtro Especializado)")
+            ws.write(1, 0, f"Período: {d_ini_str} a {d_fim_str}")
             
         return True
     except Exception as e:
-        st.error(f"Erro no processamento v6.7: {e}")
+        st.error(f"Erro na limpeza v6.9: {e}")
         return False
 
+# Automação de extração
 def iniciar_automacao(turno):
     for f in glob.glob("*.xlsx"): os.remove(f)
     inicio_t = time.time()
-    container_tempo = st.empty()
+    container = st.empty()
     
     try:
-        chrome_options = Options()
-        chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.binary_location = "/usr/bin/chromium"
+        opts = Options()
+        opts.add_argument('--headless')
+        opts.add_argument('--no-sandbox')
+        opts.binary_location = "/usr/bin/chromium"
+        driver = webdriver.Chrome(options=opts)
         
-        driver = webdriver.Chrome(options=chrome_options)
-        wait = WebDriverWait(driver, 45)
-
-        # Definição de Período
+        # Períodos
         agora = datetime.now()
-        hoje_s = agora.strftime("%d/%m/%Y")
+        hoje = agora.strftime("%d/%m/%Y")
         if turno == "DIA":
-            d_ini, d_fim = f"{hoje_s} 07:01", f"{hoje_s} 19:00"
+            d_ini, d_fim = f"{hoje} 07:01", f"{hoje} 19:00"
         else:
-            ontem_s = (agora - timedelta(days=1)).strftime("%d/%m/%Y")
-            d_ini, d_fim = f"{ontem_s} 19:00", f"{hoje_s} 07:00"
+            ontem = (agora - timedelta(days=1)).strftime("%d/%m/%Y")
+            d_ini, d_fim = f"{ontem} 19:00", f"{hoje} 07:00"
 
-        # Login
         driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/Entrar")
-        wait.until(EC.presence_of_element_located((By.ID, "Usuario"))).send_keys("40875")
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "Usuario"))).send_keys("40875")
         driver.find_element(By.ID, "Senha").send_keys("Cidadao51@")
         driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]"))
         
-        # Navegação
         time.sleep(3)
         driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
         
-        wait.until(EC.presence_of_element_located((By.ID, "txtDataInicio")))
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "txtDataInicio")))
         driver.execute_script(f"document.getElementById('txtDataInicio').value = '{d_ini}';")
         driver.execute_script(f"document.getElementById('txtDataFim').value = '{d_fim}';")
         driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "btnBuscar"))
         
-        for _ in range(25):
-            time.sleep(1)
-            container_tempo.markdown(f'<div class="cronometro">⏱️ Extraindo Dados: {round(time.time()-inicio_t, 1)}s</div>', unsafe_allow_html=True)
+        time.sleep(10) # Aguarda processamento do SisGeO
 
-        # Download Behavior
+        # Configura download
         driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
         driver.execute("send_command", {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}})
         
-        btn_xls = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.buttons-excel")))
-        driver.execute_script("arguments[0].click();", btn_xls)
+        btn = driver.find_element(By.CSS_SELECTOR, "button.buttons-excel")
+        driver.execute_script("arguments[0].click();", btn)
         
-        time.sleep(6)
-        lista_arquivos = glob.glob("*.xlsx")
-        if lista_arquivos:
-            arq = lista_arquivos[0]
-            if tratar_e_filtrar_preservando_nomes(arq, d_ini, d_fim):
-                container_tempo.success(f"✅ Sucesso! {len(pd.read_excel(arq, skiprows=2))} registros encontrados.")
-                with open(arq, "rb") as f:
-                    st.download_button(f"📥 Baixar XLSX {turno}", f, file_name=f"Sisgeo_{turno}_Específico.xlsx")
-        else:
-            st.warning("Nenhum dado encontrado para este período.")
-
+        time.sleep(8)
+        arq = glob.glob("*.xlsx")[0]
+        
+        if tratar_e_filtrar_fiel_a_base(arq, d_ini, d_fim):
+            container.success(f"✅ Arquivo gerado seguindo a base correta!")
+            with open(arq, "rb") as f:
+                st.download_button(f"📥 Baixar Base para Looker ({turno})", f, file_name=f"Sisgeo_{turno}_Final.xlsx")
+                
     except Exception as e:
-        st.error(f"Erro Crítico v6.7: {e}")
+        st.error(f"Erro: {e}")
     finally:
         if 'driver' in locals(): driver.quit()
 
-# Botões Front-end
+st.title(f"Extrator SisGeO {VERSAO}")
 c1, c2 = st.columns(2)
 with c1:
-    if st.button("☀️ Turno DIA"): iniciar_automacao("DIA")
+    if st.button("☀️ Puxar Turno DIA"): iniciar_automacao("DIA")
 with c2:
-    if st.button("🌙 Turno NOITE"): iniciar_automacao("NOITE")
+    if st.button("🌙 Puxar Turno NOITE"): iniciar_automacao("NOITE")
