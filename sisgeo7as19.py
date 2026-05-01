@@ -23,12 +23,14 @@ if st.button("Gerar Planilha Agora"):
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--disable-gpu')
+            # Adicionado para evitar o crash (Stacktrace)
+            chrome_options.add_argument('--remote-debugging-port=9222')
             
             prefs = {"download.default_directory": os.getcwd()}
             chrome_options.add_experimental_option("prefs", prefs)
 
             driver = webdriver.Chrome(options=chrome_options)
-            wait = WebDriverWait(driver, 20)
+            wait = WebDriverWait(driver, 25)
 
             # 1. LOGIN
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/Entrar")
@@ -37,11 +39,11 @@ if st.button("Gerar Planilha Agora"):
             driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]").click()
             time.sleep(5)
 
-            # 2. ACESSAR CONSULTA
+            # 2. FILTROS E DATAS
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
-            time.sleep(2)
+            time.sleep(3)
 
-            # 3. SELEÇÃO DE TIPOS
+            # 3. SELEÇÃO DE TIPOS (Igual ao seu original)
             botao_tipo = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@data-id, 'ddlTipoOcorrencia')]")))
             driver.execute_script("arguments[0].click();", botao_tipo)
             time.sleep(1)
@@ -53,39 +55,35 @@ if st.button("Gerar Planilha Agora"):
                     driver.execute_script("arguments[0].click();", item)
                 except: pass
 
-            # Fecha o menu de tipos com ESC e um clique fora (garantia dupla)
+            # FECHAR O MENU (Para não dar o erro de clique interceptado)
             driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
-            time.sleep(1)
-
+            time.sleep(2) # Espera o menu sumir
+            
             # --- AJUSTE DE FUSO E DATAS ---
             fuso_br = pytz.timezone('America/Sao_Paulo')
             agora_br = datetime.now(fuso_br)
-            hoje_str = agora_br.strftime("%d/%m/%Y")
-            data_ini, data_f = f"{hoje_str} 07:01", f"{hoje_str} 19:00"
+            hoje = agora_br.strftime("%d/%m/%Y")
+            data_ini, data_f = f"{hoje} 07:01", f"{hoje} 19:00"
 
-            # 4. PREENCHER DATAS (Usando JavaScript para não ser "interceptado")
-            def preencher_blindado(id_campo, valor):
-                elemento = wait.until(EC.presence_of_element_located((By.ID, id_campo)))
-                # Força o clique via JS para ignorar menus sobrepostos
-                driver.execute_script("arguments[0].click();", elemento)
-                elemento.send_keys(Keys.CONTROL + "a")
-                elemento.send_keys(Keys.BACKSPACE)
-                elemento.send_keys(valor)
-                elemento.send_keys(Keys.TAB)
+            # 4. PREENCHER DATAS (Usando JavaScript para evitar erros de clique)
+            def preencher_js(id_campo, valor):
+                campo = driver.find_element(By.ID, id_campo)
+                driver.execute_script("arguments[0].value = '';", campo) # Limpa via JS
+                campo.send_keys(valor)
+                campo.send_keys(Keys.TAB)
 
-            preencher_blindado("txtDataInicio", data_ini)
-            preencher_blindado("txtDataFim", data_f)
+            preencher_js("txtDataInicio", data_ini)
+            preencher_js("txtDataFim", data_f)
             
-            # Clique no checkbox também via JavaScript
-            chk = driver.find_element(By.XPATH, "//label[@for='chkComEmpenho']")
-            driver.execute_script("arguments[0].click();", chk)
+            # Com viaturas empenhadas
+            driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "chkComEmpenho"))
 
-            # 5. BUSCAR
+            # 5. CONSULTA E EXCEL
             driver.find_element(By.ID, "btnBuscar").click()
-            st.info(f"📅 Horário Brasil: {agora_br.strftime('%H:%M:%S')}")
-            time.sleep(12) 
+            st.write(f"🔍 Filtrando: {data_ini} até {data_f}")
+            time.sleep(12)
 
-            # 6. DOWNLOAD
+            # Download
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
             params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
             driver.execute("send_command", params)
@@ -104,13 +102,13 @@ if st.button("Gerar Planilha Agora"):
 
             if arquivo_final:
                 with open(arquivo_final, "rb") as f:
-                    st.download_button(label="💾 BAIXAR EXCEL", data=f, file_name=arquivo_final)
-                st.success("✅ Relatório gerado!")
+                    st.download_button(label="💾 BAIXAR RELATÓRIO", data=f, file_name=arquivo_final)
+                st.success("✅ Concluído!")
             else:
-                st.error("❌ Arquivo não encontrado.")
+                st.error("❌ Arquivo não gerado.")
 
         except Exception as e:
-            st.error(f"❌ Erro: {e}")
+            st.error(f"❌ Ocorreu um erro: {e}")
         finally:
             if 'driver' in locals():
                 driver.quit()
