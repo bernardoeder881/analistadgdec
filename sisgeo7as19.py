@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 
 # Configuração da Página
-st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
+st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="")
 st.title("SisGeO Extrator 🚒")
 st.write("Escolha o turno para gerar o relatório automático:")
 
