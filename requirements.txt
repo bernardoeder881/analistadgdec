@@ -1,2 +1,4 @@
 selenium
 pytz
+pandas
+openpyxl
