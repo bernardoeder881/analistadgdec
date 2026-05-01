@@ -1,4 +1,6 @@
+xlsxwriter
 selenium
 pytz
 pandas
 openpyxl
+
