@@ -11,35 +11,38 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 # ==========================================
-# VERSÃO DO CÓDIGO: v6.0
-# Analista de Dados: Python, Sheets & Looker Expert
+# VERSÃO DO CÓDIGO: v6.1
+# Foco: Resiliência de Bibliotecas e UI
 # ==========================================
-VERSAO = "v6.0"
+VERSAO = "v6.1"
 
-st.set_page_config(page_title=f"SisGeO Extrator {VERSAO} 🚒", page_icon="🚒")
+st.set_page_config(page_title=f"SisGeO Extrator {VERSAO}", page_icon="🚒")
 
-# Estilo para o cronômetro
+# CSS para o cronômetro ficar elegante
 st.markdown("""
     <style>
     .cronometro {
-        font-size: 20px;
+        font-size: 22px;
         font-weight: bold;
-        color: #FF4B4B;
-        padding: 10px;
-        border: 1px solid #FF4B4B;
-        border-radius: 5px;
+        color: #FFFFFF;
+        background-color: #FF4B4B;
+        padding: 15px;
+        border-radius: 10px;
         text-align: center;
+        margin-bottom: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
 
 st.title(f"SisGeO Extrator {VERSAO} 🚒")
-st.sidebar.markdown(f"**Versão Atual:** {VERSAO}")
-st.sidebar.info("Especialista: Python | Google Sheets | Looker")
+st.sidebar.markdown(f"**Status:** Sistema Operacional")
+st.sidebar.markdown(f"**Versão:** {VERSAO}")
 
 def tratar_e_clonar_manual(caminho_arquivo, data_ini, data_f):
     try:
         df_dados = pd.read_excel(caminho_arquivo, skiprows=2)
+        
+        # Correção de fuso e formatação para Google Planilhas
         colunas_data = ['Data Ocorrência', 'Data Despacho', 'Data Deslocamento', 'Data Chegada', 'Data Fechamento']
         for col in colunas_data:
             if col in df_dados.columns:
@@ -47,39 +50,45 @@ def tratar_e_clonar_manual(caminho_arquivo, data_ini, data_f):
                 df_dados[col] = df_dados[col] - pd.Timedelta(hours=3)
                 df_dados[col] = df_dados[col].dt.strftime('%d/%m/%Y %H:%M')
 
-        with pd.ExcelWriter(caminho_arquivo, engine='xlsxwriter') as writer:
-            df_dados.to_excel(writer, index=False, startrow=2, sheet_name='Sheet1')
-            workbook  = writer.book
-            worksheet = writer.sheets['Sheet1']
-            fmt_texto = workbook.add_format({'bold': False, 'align': 'left'})
-            worksheet.write(0, 0, "SisGeO - Consulta Ocorrência", fmt_texto)
-            texto_periodo = f"Período: {data_ini}:00 a {data_f}:59"
-            worksheet.write(1, 0, texto_periodo, fmt_texto)
-            for i, col in enumerate(df_dados.columns):
-                largura = max(df_dados[col].astype(str).map(len).max(), len(col)) + 2
-                worksheet.set_column(i, i, largura)
+        # Tenta salvar com formatação SisGeO
+        try:
+            with pd.ExcelWriter(caminho_arquivo, engine='xlsxwriter') as writer:
+                df_dados.to_excel(writer, index=False, startrow=2, sheet_name='Sheet1')
+                workbook  = writer.book
+                worksheet = writer.sheets['Sheet1']
+                fmt_texto = workbook.add_format({'bold': False, 'align': 'left'})
+                worksheet.write(0, 0, "SisGeO - Consulta Ocorrência", fmt_texto)
+                worksheet.write(1, 0, f"Período: {data_ini}:00 a {data_f}:59", fmt_texto)
+                
+                for i, col in enumerate(df_dados.columns):
+                    largura = max(df_dados[col].astype(str).map(len).max(), len(col)) + 2
+                    worksheet.set_column(i, i, largura)
+        except ModuleNotFoundError:
+            # Fallback caso o xlsxwriter não esteja instalado
+            st.warning("⚠️ Nota do Analista: Biblioteca 'xlsxwriter' não encontrada. Gerando arquivo simplificado.")
+            df_dados.to_excel(caminho_arquivo, index=False)
+            
         return True
     except Exception as e:
-        st.error(f"Erro no processamento {VERSAO}: {e}")
+        st.error(f"Erro no tratamento de dados: {e}")
         return False
 
 def executar_extracao(tipo_turno):
-    # Limpeza inicial
+    # Limpeza de resíduos
     for f in glob.glob("*.xlsx"):
         try: os.remove(f)
         except: pass
 
     inicio_processo = time.time()
-    placeholder_tempo = st.empty() # Espaço para o cronômetro
+    placeholder_tempo = st.empty() 
     
-    with st.spinner(f"Iniciando extração {tipo_turno}..."):
+    with st.spinner(f"Processando Turno {tipo_turno}..."):
         try:
+            # Configuração Selenium
             chrome_options = Options()
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--window-size=1920,1080')
-            chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
             chrome_options.binary_location = "/usr/bin/chromium"
             
             prefs = {"download.default_directory": os.getcwd()}
@@ -88,7 +97,7 @@ def executar_extracao(tipo_turno):
             driver = webdriver.Chrome(options=chrome_options)
             wait = WebDriverWait(driver, 50) 
 
-            # Datas
+            # Lógica de Horários
             hoje_dt = datetime.now()
             hoje_str = hoje_dt.strftime("%d/%m/%Y")
             if tipo_turno == "DIA":
@@ -97,24 +106,22 @@ def executar_extracao(tipo_turno):
                 ontem_str = (hoje_dt - timedelta(days=1)).strftime("%d/%m/%Y")
                 data_ini, data_f = f"{ontem_str} 19:00", f"{hoje_str} 07:00"
 
-            # Login e Navegação
+            # Navegação com atualização do tempo
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/Entrar")
             
-            # Enquanto o Selenium trabalha, atualizamos o tempo
-            tempo_decorrido = round(time.time() - inicio_processo, 1)
-            placeholder_tempo.markdown(f'<div class="cronometro">⏱️ Tempo: {tempo_decorrido}s</div>', unsafe_allow_html=True)
-            
+            # Login
             wait.until(EC.presence_of_element_located((By.ID, "Usuario"))).send_keys("40875")
             driver.find_element(By.ID, "Senha").send_keys("Cidadao51@")
             driver.execute_script("arguments[0].click();", driver.find_element(By.XPATH, "//button[contains(., 'Entrar')]"))
             
-            time.sleep(5)
+            # Loop de espera para atualizar cronômetro visualmente
+            for _ in range(5): 
+                time.sleep(1)
+                placeholder_tempo.markdown(f'<div class="cronometro">⏱️ Extraindo... {round(time.time() - inicio_processo, 1)}s</div>', unsafe_allow_html=True)
+
             driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
             
-            # Filtros
-            tempo_decorrido = round(time.time() - inicio_processo, 1)
-            placeholder_tempo.markdown(f'<div class="cronometro">⏱️ Tempo: {tempo_decorrido}s</div>', unsafe_allow_html=True)
-            
+            # Preenchimento de campos
             wait.until(EC.presence_of_element_located((By.ID, "txtDataInicio")))
             driver.execute_script(f"document.getElementById('txtDataInicio').value = '{data_ini}';")
             driver.execute_script(f"document.getElementById('txtDataFim').value = '{data_f}';")
@@ -124,53 +131,45 @@ def executar_extracao(tipo_turno):
 
             driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "btnBuscar"))
             
-            # Espera longa do SisGeO (com atualização do cronômetro)
+            # Espera o SisGeO processar (a parte mais demorada)
             for i in range(25):
                 time.sleep(1)
-                tempo_decorrido = round(time.time() - inicio_processo, 1)
-                placeholder_tempo.markdown(f'<div class="cronometro">⏱️ Tempo: {tempo_decorrido}s</div>', unsafe_allow_html=True)
+                placeholder_tempo.markdown(f'<div class="cronometro">⏱️ Processando SisGeO... {round(time.time() - inicio_processo, 1)}s</div>', unsafe_allow_html=True)
 
-            # Download
-            driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
-            params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
-            driver.execute("send_command", params)
-            
+            # Clique no Download
             btn_excel = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.buttons-excel.btn-warning")))
             driver.execute_script("arguments[0].click();", btn_excel)
             
+            # Verificação de arquivo
             arquivo_final = None
-            for _ in range(30):
+            for _ in range(20):
                 arquivos = [f for f in os.listdir('.') if f.endswith('.xlsx')]
                 if arquivos:
                     arquivos.sort(key=os.path.getmtime)
                     arquivo_final = arquivos[-1]
                     break
                 time.sleep(1)
-                tempo_decorrido = round(time.time() - inicio_processo, 1)
-                placeholder_tempo.markdown(f'<div class="cronometro">⏱️ Tempo: {tempo_decorrido}s</div>', unsafe_allow_html=True)
+                placeholder_tempo.markdown(f'<div class="cronometro">⏱️ Finalizando... {round(time.time() - inicio_processo, 1)}s</div>', unsafe_allow_html=True)
 
             if arquivo_final:
                 if tratar_e_clonar_manual(arquivo_final, data_ini, data_f):
                     tempo_total = round(time.time() - inicio_processo, 2)
-                    placeholder_tempo.success(f"✅ Finalizado em {tempo_total} segundos!")
+                    placeholder_tempo.success(f"✅ Concluído em {tempo_total}s!")
                     with open(arquivo_final, "rb") as f:
                         st.download_button(
-                            label=f"💾 BAIXAR EXCEL {tipo_turno}",
+                            label=f"💾 BAIXAR PLANILHA {tipo_turno}",
                             data=f,
-                            file_name=f"SisGeO_Consulta_{tipo_turno}.xlsx",
+                            file_name=f"SisGeO_{tipo_turno}_{hoje_str.replace('/','-')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
-            else:
-                st.error("Arquivo não encontrado.")
-
         except Exception as e:
-            st.error(f"Erro na {VERSAO}: {e}")
+            st.error(f"Erro crítico na v6.1: {e}")
         finally:
             if 'driver' in locals(): driver.quit()
 
-# Botões
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("☀️ Turno Dia"): executar_extracao("DIA")
-with col2:
-    if st.button("🌙 Turno Noite"): executar_extracao("NOITE")
+# Layout de Botões
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("☀️ Extrair Dia"): executar_extracao("DIA")
+with c2:
+    if st.button("🌙 Extrair Noite"): executar_extracao("NOITE")
