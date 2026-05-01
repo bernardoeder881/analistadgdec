@@ -11,9 +11,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 
 # Configuração da Página
-st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="")
+st.set_page_config(page_title="SisGeO Extrator 🚒", page_icon="🚒")
 st.title("SisGeO Extrator 🚒")
-st.write("Escolha o turno para gerar o relatório automático:")
+st.write("Escolha o turno para gerar o relatório automático (Ajustado para Horário de Brasília):")
 
 def executar_extracao(tipo_turno):
     # Limpeza de arquivos antigos para não baixar o errado
@@ -38,15 +38,16 @@ def executar_extracao(tipo_turno):
             driver = webdriver.Chrome(options=chrome_options)
             wait = WebDriverWait(driver, 25)
 
-            # 2. DEFINIÇÃO DAS DATAS
-            hoje_dt = datetime.now()
-            hoje_str = hoje_dt.strftime("%d/%m/%Y")
+            # 2. DEFINIÇÃO DAS DATAS (AJUSTE UTC PARA BRASÍLIA -3 HORAS)
+            # Como o servidor do GitHub/Streamlit usa UTC, subtraímos 3 horas para alinhar ao RJ.
+            agora_br = datetime.now() - timedelta(hours=3)
+            hoje_str = agora_br.strftime("%d/%m/%Y")
             
             if tipo_turno == "DIA":
                 data_ini, data_f = f"{hoje_str} 07:01", f"{hoje_str} 19:00"
             else:
-                # Noite: 19:00 de ontem até 07:00 de hoje
-                ontem_str = (hoje_dt - timedelta(days=1)).strftime("%d/%m/%Y")
+                # Noite: 19:00 de ontem até 07:00 de hoje (baseado no horário BR ajustado)
+                ontem_str = (agora_br - timedelta(days=1)).strftime("%d/%m/%Y")
                 data_ini, data_f = f"{ontem_str} 19:00", f"{hoje_str} 07:00"
 
             # 3. LOGIN
@@ -90,10 +91,10 @@ def executar_extracao(tipo_turno):
             
             # 6. CONSULTA E EXCEL
             driver.find_element(By.ID, "btnBuscar").click()
-            st.write(f"🔍 Buscando período: {data_ini} até {data_f}")
+            st.info(f"🔍 Buscando período (Horário RJ): {data_ini} até {data_f}")
             time.sleep(12)
 
-            # Comando para autorizar download em headless
+            # Autorizar download em modo headless
             driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
             params = {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}}
             driver.execute("send_command", params)
@@ -121,12 +122,12 @@ def executar_extracao(tipo_turno):
                         file_name=f"Relatorio_{tipo_turno}_{hoje_str.replace('/','-')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                st.success(f"✅ Relatório {tipo_turno} gerado!")
+                st.success(f"✅ Relatório {tipo_turno} gerado com sucesso!")
             else:
-                st.error("❌ O arquivo não foi gerado.")
+                st.error("❌ O arquivo não foi gerado. Verifique os filtros no SisGeO.")
 
         except Exception as e:
-            st.error(f"❌ Erro: {e}")
+            st.error(f"❌ Erro durante a extração: {e}")
         finally:
             if 'driver' in locals():
                 driver.quit()
