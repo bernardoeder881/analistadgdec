@@ -9,16 +9,16 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 # ==========================================
-# VERSÃO DO CÓDIGO: v6.9 (ESPELHO DA MANUAL)
-# Foco: Fidelidade total à planilha base.
+# VERSÃO DO CÓDIGO: v7.0 (MODO ESPELHO)
+# Foco: Zero descartes por horário. Limpeza apenas por Natureza.
 # ==========================================
-VERSAO = "v6.9"
+VERSAO = "v7.0"
 
 st.set_page_config(page_title=f"SisGeO Extrator {VERSAO}", page_icon="🚒")
 
-def tratar_e_filtrar_fiel_a_base(caminho, d_ini_str, d_fim_str):
+def tratar_e_filtrar_v7(caminho):
     try:
-        # 1. Localiza o início dos dados (Preservando a estrutura SisGeO)
+        # 1. Identifica o cabeçalho original
         df_temp = pd.read_excel(caminho)
         linha_cabecalho = 0
         for i, row in df_temp.iterrows():
@@ -26,77 +26,61 @@ def tratar_e_filtrar_fiel_a_base(caminho, d_ini_str, d_fim_str):
                 linha_cabecalho = i + 1
                 break
         
-        # 2. Carrega mantendo NOMES DE COLUNAS ORIGINAIS
+        # 2. Carrega mantendo os nomes de colunas da sua planilha perfeita
         df = pd.read_excel(caminho, skiprows=linha_cabecalho)
-        df = df.loc[:, ~df.columns.str.contains('^Unnamed')] # Remove colunas vazias
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
         
         # ==========================================================
-        # NATUREZAS DEFINIDAS PELO ANALISTA (BASE CORRETA)
+        # FILTRO DE NATUREZAS (BUSCA FLEXÍVEL)
         # ==========================================================
-        naturezas_corretas = [
+        naturezas_alvo = [
             'Corte de Árvore', 
             'Salvamento de Pessoa', 
-            'DESLIZAMENTO / DESABAMENTO', 
-            'ENCHENTE / INUNDAÇÃO', 
+            'DESLIZAMENTO', 
+            'ENCHENTE', 
             'FOGO EM VEGETAÇÃO'
         ]
         
-        # Localiza a coluna correta (pode variar entre 'Tipo Ocorrência' ou 'Natureza')
-        col_alvo = next((c for c in df.columns if c in ['Tipo Ocorrência', 'Natureza']), None)
+        # Localiza a coluna de natureza
+        col_tipo = next((c for c in df.columns if c in ['Tipo Ocorrência', 'Natureza']), None)
         
-        if col_alvo:
-            # FILTRO RADICAL: Mantém apenas o que está na lista
-            df = df[df[col_alvo].isin(naturezas_corretas)]
-        else:
-            # Fallback caso o sistema mude o nome da coluna de novo
-            for col in df.columns:
-                if df[col].astype(str).isin(naturezas_corretas).any():
-                    df = df[df[col].isin(naturezas_corretas)]
-                    break
+        if col_tipo:
+            # Filtra se CONTÉM qualquer uma das palavras acima (evita erro de espaços/barras)
+            padrao = '|'.join(naturezas_alvo)
+            df = df[df[col_tipo].str.contains(padrao, case=False, na=False)]
 
-        # 3. Tratamento de Datas e Fuso (-3h) - Sem mudar nomes das colunas
+        # 3. Ajuste de Fuso (-3h) - SEM FILTRAR HORÁRIO
         cols_data = ['Data Ocorrência', 'Data Despacho', 'Data Deslocamento', 'Data Chegada', 'Data Fechamento']
         
-        if 'Data Ocorrência' in df.columns:
-            df['Data Ocorrência'] = pd.to_datetime(df['Data Ocorrência'], dayfirst=True, errors='coerce') - pd.Timedelta(hours=3)
-            # Filtro de data rigoroso conforme o turno solicitado
-            limite_ini = pd.to_datetime(d_ini_str, dayfirst=True)
-            limite_fim = pd.to_datetime(d_fim_str, dayfirst=True)
-            df = df[(df['Data Ocorrência'] >= limite_ini) & (df['Data Ocorrência'] <= limite_fim)]
-
         for col in cols_data:
-            if col in df.columns and col != 'Data Ocorrência':
-                df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce') - pd.Timedelta(hours=3)
             if col in df.columns:
+                # Converte e subtrai 3h, mas NÃO deleta ninguém
+                df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce') - pd.Timedelta(hours=3)
                 df[col] = df[col].dt.strftime('%d/%m/%Y %H:%M')
 
-        # 4. Exportação idêntica à planilha manual (Start na linha 3)
+        # 4. Salva no formato que o Looker aceita
         with pd.ExcelWriter(caminho, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, startrow=2, sheet_name='Sheet1')
             ws = writer.sheets['Sheet1']
-            # Mantém o cabeçalho informativo do SisGeO
-            ws.write(0, 0, "SisGeO - Consulta Ocorrência (Filtro Especializado)")
-            ws.write(1, 0, f"Período: {d_ini_str} a {d_fim_str}")
+            ws.write(0, 0, "SisGeO - Extração Técnica (Base Conferida)")
             
         return True
     except Exception as e:
-        st.error(f"Erro na limpeza v6.9: {e}")
+        st.error(f"Erro no processamento v7.0: {e}")
         return False
 
-# Automação de extração
 def iniciar_automacao(turno):
     for f in glob.glob("*.xlsx"): os.remove(f)
     inicio_t = time.time()
-    container = st.empty()
     
     try:
-        opts = Options()
-        opts.add_argument('--headless')
-        opts.add_argument('--no-sandbox')
-        opts.binary_location = "/usr/bin/chromium"
-        driver = webdriver.Chrome(options=opts)
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.binary_location = "/usr/bin/chromium"
+        driver = webdriver.Chrome(options=chrome_options)
         
-        # Períodos
+        # Datas para o preenchimento do site
         agora = datetime.now()
         hoje = agora.strftime("%d/%m/%Y")
         if turno == "DIA":
@@ -113,14 +97,15 @@ def iniciar_automacao(turno):
         time.sleep(3)
         driver.get("https://sisgeo.cbmerj.rj.gov.br/Sisgeo/ConsultaOcorrencia")
         
+        # Preenche os campos de busca do SisGeO
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "txtDataInicio")))
         driver.execute_script(f"document.getElementById('txtDataInicio').value = '{d_ini}';")
         driver.execute_script(f"document.getElementById('txtDataFim').value = '{d_fim}';")
         driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "btnBuscar"))
         
-        time.sleep(10) # Aguarda processamento do SisGeO
+        time.sleep(12) # Tempo para o SisGeO processar a busca
 
-        # Configura download
+        # Download
         driver.command_executor._commands["send_command"] = ("POST", '/session/$sessionId/chromium/send_command')
         driver.execute("send_command", {'cmd': 'Page.setDownloadBehavior', 'params': {'behavior': 'allow', 'downloadPath': os.getcwd()}})
         
@@ -130,19 +115,19 @@ def iniciar_automacao(turno):
         time.sleep(8)
         arq = glob.glob("*.xlsx")[0]
         
-        if tratar_e_filtrar_fiel_a_base(arq, d_ini, d_fim):
-            container.success(f"✅ Arquivo gerado seguindo a base correta!")
+        if tratar_e_filtrar_v7(arq):
+            st.success(f"✅ Sucesso! Planilha gerada com base na sua conferência.")
             with open(arq, "rb") as f:
-                st.download_button(f"📥 Baixar Base para Looker ({turno})", f, file_name=f"Sisgeo_{turno}_Final.xlsx")
-                
+                st.download_button(f"📥 Baixar Arquivo Final ({turno})", f, file_name=f"Sisgeo_{turno}_v7.xlsx")
+
     except Exception as e:
-        st.error(f"Erro: {e}")
+        st.error(f"Erro Crítico: {e}")
     finally:
         if 'driver' in locals(): driver.quit()
 
-st.title(f"Extrator SisGeO {VERSAO}")
+st.title(f"Extrator SisGeO {VERSAO} 🚒")
 c1, c2 = st.columns(2)
 with c1:
-    if st.button("☀️ Puxar Turno DIA"): iniciar_automacao("DIA")
+    if st.button("☀️ Turno DIA"): iniciar_automacao("DIA")
 with c2:
-    if st.button("🌙 Puxar Turno NOITE"): iniciar_automacao("NOITE")
+    if st.button("🌙 Turno NOITE"): iniciar_automacao("NOITE")
